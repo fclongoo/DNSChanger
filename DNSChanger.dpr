@@ -1,3 +1,8 @@
+(*
+  Version 1.0 2023.07.15
+  First Release
+*)
+
 program DNSChanger;
 
 {$APPTYPE CONSOLE}
@@ -384,8 +389,8 @@ begin
       Writeln('DNS·þÎñÆ÷£º');
       for I := 0 to Length(DNSArr) - 1 do
       begin
-        Writeln(IntToStr(I + 1) + '.' + DNSArr[I][0] + ' - (' + DNSArr[I][1] + ','
-          + DNSArr[I][2] + ')');
+        Writeln(IntToStr(I + 1) + '.' + DNSArr[I][0] + ' - (' + DNSArr[I][1] +
+          ',' + DNSArr[I][2] + ')');
       end;
       Writeln;
 
