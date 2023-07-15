@@ -183,7 +183,7 @@ end;
 
 *)
 
-function NotifyIPChange(lpszAdapterName: AnsiString): BOOL;
+function NotifyIPChange(lpszAdapterName: string): BOOL;
 type
   TDhcpNotifyConfigChange = function(lpwszServerName: PWideChar; // 本地机器为NULL
     lpwszAdapterName: PWideChar; // 适配器名称
@@ -196,16 +196,20 @@ var
   hDhcpDll: DWORD;
   MyDhcpNotifyConfigChange: TDhcpNotifyConfigChange;
 begin
+  Result := False;
   hDhcpDll := LoadLibrary('dhcpcsvc.dll');
   if hDhcpDll <> 0 then
-
   begin
     MyDhcpNotifyConfigChange := GetProcAddress(hDhcpDll,
       'DhcpNotifyConfigChange');
-    MyDhcpNotifyConfigChange(nil, PChar(String(lpszAdapterName)), False,
-      0, 0, 0, 0)
+    if Assigned(MyDhcpNotifyConfigChange) then
+    begin
+      MyDhcpNotifyConfigChange(nil, PChar(lpszAdapterName), False, 0, 0, 0, 0);
+      Result := True;
+    end;
+    FreeLibrary(hDhcpDll);
   end;
-  FreeLibrary(hDhcpDll);
+
 end;
 
 (*
@@ -256,6 +260,30 @@ begin
     Reg.Free;
   end;
 end;
+
+function ReadNameServer(AdapterName: string): string;
+var
+  Reg: TRegistry;
+  KeyName: string;
+begin
+  KeyName := '\SYSTEM\ControlSet001\Services\Tcpip\Parameters\Interfaces\' +
+    AdapterName; // {22195997-5de8-480d-bb33-5c0d839481aa}';
+  Result := '';
+  Reg := TRegistry.Create(KEY_READ or KEY_WOW64_64KEY);
+  Reg.RootKey := HKEY_LOCAL_MACHINE;
+  try
+    if Reg.OpenKey(KeyName, True) then
+    begin
+      Result := Reg.ReadString('NameServer');
+      if Result = '' then
+      begin
+        Result := 'AutoDNS';
+      end;
+    end;
+  finally
+    Reg.Free;
+  end;
+end;
 (*
   function GetLanAdapterName: AnsiString;
   var
@@ -289,90 +317,116 @@ var
   AdapterNames: TStrings;
   Quit, needMore: Boolean;
 
+label
+  lblWait, lblExit;
+
 begin
   AdapterNames := TStringList.Create;
   try
     try
 
-      Writeln('DNS服务器快速切换');
-
+      Writeln('DNS服务器快速切换 Version 1.0');
+      (* 初始化网卡索引 *)
+      IndexAdapter := -1;
+      (* 初始化DNS服务器索引 *)
+      IndexDNS := -1;
+      (* 获取网卡列表 *)
       GetNetCardKeys(AdapterNames);
-      Writeln;
-      Writeln('网卡列表：');
-      // Writeln('选择网卡号(1-' + IntToStr(AdapterNames.Count) + ')， 退出请按Q。');
-      I := 1;
-      for AdapterName in AdapterNames do
+
+      if AdapterNames.Count = 0 then
       begin
+        Writeln;
+        Writeln('未发现网卡！');
+        goto lblWait;
+      end
+      else if AdapterNames.Count = 1 then
+      begin
+        AdapterName := AdapterNames[0];
         index := Pos(' ', AdapterName);
-        // Writeln(AdapterName);
-        Writeln(IntToStr(I) + '.' + Copy(AdapterName, Index + 1, MaxInt));
-        Inc(I);
+        Writeln;
+        Writeln('网卡: ' + Copy(AdapterName, Index + 1, MaxInt) + ' - (' +
+          ReadNameServer(Copy(AdapterName, 1, Index - 1)) + ')');
+        IndexAdapter := 1;
+      end
+      else
+      begin
+        Writeln;
+        Writeln('网卡列表：');
+        I := 1;
+        for AdapterName in AdapterNames do
+        begin
+          index := Pos(' ', AdapterName);
+          Writeln(IntToStr(I) + '.' + Copy(AdapterName, Index + 1, MaxInt) +
+            ' - (' + ReadNameServer(Copy(AdapterName, 1, Index - 1)) + ')');
+          Inc(I);
+        end;
+        Writeln;
+
+        Quit := False;
+        needMore := True;
+
+        while (not Quit) and needMore do
+        begin
+
+          Write('选择网卡(1-' + IntToStr(AdapterNames.Count) + ')， 退出按Q：');
+          ReadLn(S);
+          Quit := (S = 'q') OR (S = 'Q');
+          IndexAdapter := StrToIntDef(S, -1);
+          needMore := (IndexAdapter <= 0) or
+            (IndexAdapter > AdapterNames.Count);
+
+        end;
+        if Quit then
+          goto lblExit;
+      end;
+
+      Writeln;
+      Writeln('DNS服务器：');
+      for I := 0 to Length(DNSArr) - 1 do
+      begin
+        Writeln(IntToStr(I + 1) + '.' + DNSArr[I][0] + ' - (' + DNSArr[I][1] + ','
+          + DNSArr[I][2] + ')');
       end;
       Writeln;
 
       Quit := False;
-      // Running := True;
       needMore := True;
-      // Write('选择网卡(1-' + IntToStr(AdapterNames.Count) + ')， 退出按Q：');
+
       while (not Quit) and needMore do
       begin
 
-        Write('选择网卡(1-' + IntToStr(AdapterNames.Count) + ')， 退出按Q：');
-
+        Write('选择DNS服务器(1-' + IntToStr(Length(DNSArr)) + ')， 退出按Q：');
         ReadLn(S);
         Quit := (S = 'q') OR (S = 'Q');
-        IndexAdapter := StrToIntDef(S, -1);
-        needMore := (IndexAdapter <= 0) or (IndexAdapter > AdapterNames.Count);
+        IndexDNS := StrToIntDef(S, -1);
+        needMore := (IndexDNS <= 0) or (IndexDNS > Length(DNSArr));
 
       end;
-      if (not Quit) then
-      begin
-        // AdapterName := AdapterNames[index - 1];
-        Writeln;
-        Writeln('DNS服务器：');
-        for I := 0 to Length(DNSArr) - 1 do
-        begin
-          Writeln(IntToStr(I + 1) + '.' + DNSArr[I][0] + '(' + DNSArr[I][1] +
-            ',' + DNSArr[I][2] + ')');
-        end;
-        Writeln;
 
-        needMore := True;
-        // Write('选择DNS服务器(1-' + IntToStr(AdapterNames.Count) + ')， 退出按Q：');
-        while (not Quit) and needMore do
-        begin
+      if Quit then
+        goto lblExit;
 
-          Write('选择DNS服务器(1-' + IntToStr(Length(DNSArr)) + ')， 退出按Q：');
-          ReadLn(S);
-          Quit := (S = 'q') OR (S = 'Q');
-          IndexDNS := StrToIntDef(S, -1);
-          needMore := (IndexDNS <= 0) or (IndexDNS > Length(DNSArr));
+      Dec(IndexAdapter);
+      Dec(IndexDNS);
+      AdapterName := AdapterNames[IndexAdapter];
+      index := Pos(' ', AdapterName);
+      AdapterName := Copy(AdapterName, 1, Index - 1);
+      RegNameServer(AdapterName, DNSArr[IndexDNS][1], DNSArr[IndexDNS][2]);
+      NotifyIPChange(AdapterName);
+      Writeln;
+      Writeln('网卡: ' + Copy(AdapterNames[IndexAdapter], Index + 1, MaxInt));
+      Writeln('DNS服务器: ' + DNSArr[IndexDNS][1] + ' ' + DNSArr[IndexDNS][2]);
+      Writeln;
 
-        end;
-
-        if not Quit then
-        begin
-          Dec(IndexAdapter);
-          Dec(IndexDNS);
-          AdapterName := AdapterNames[IndexAdapter];
-          index := Pos(' ', AdapterName);
-          AdapterName := Copy(AdapterName, 1, Index - 1);
-          RegNameServer(AdapterName, DNSArr[IndexDNS][1], DNSArr[IndexDNS][2]);
-          NotifyIPChange(AdapterName);
-          Writeln;
-          Writeln('网卡: ' + Copy(AdapterNames[IndexAdapter], Index + 1, MaxInt));
-          Writeln('DNS服务器: ' + DNSArr[IndexDNS][1] + ' ' + DNSArr[IndexDNS][2]);
-          Writeln;
-          Writeln('按回车键退出');
-          ReadLn;
-        end;
-      end;
+    lblWait:
+      Writeln('按回车键退出');
+      ReadLn;
+    lblExit:
     except
-
       on E: Exception do
-
+      begin
         Writeln(E.ClassName, ': ', E.Message);
-
+      end;
     end;
 
   finally
